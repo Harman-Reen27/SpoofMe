@@ -1,85 +1,90 @@
 # SpoofMe
 
-A small project I'm working on to learn how iPhone location services work. I want to connect my own iPhone to my Mac over USB and eventually choose a location from a map.
+A personal project to learn how iPhone location services work. I'm using Python and pymobiledevice3 to connect to my own iPhone over USB and simulate a location. Eventually I'd like to put a small macOS interface around it.
 
-For now, there's a Python script that finds USB-connected devices, lets me pick one and checks the connection. It prints the iPhone's name, model, iOS version and Developer Mode status. Location commands and the desktop app are next.
+USB discovery, Set and Clear are working on my phone and have been checked in Apple Maps. The interface is still to come.
 
 ## Setup
 
-I'm using an Apple Silicon Mac with Python 3.14 and pymobiledevice3 11.50.3.
+I'm developing on an Apple Silicon Mac with Python 3.14. The scripts use pymobiledevice3 11.50.3 and the USB developer connection available on iOS 17.4 and later.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r iphone/requirements.txt
 ```
 
-`.venv` contains the installed Python packages. Most of its size comes from pymobiledevice3 and its dependencies. It's ignored by Git and can be recreated with these commands.
+`.venv` holds the installed libraries and is ignored by Git. Most of its size comes from pymobiledevice3's dependencies. Node and Electron aren't needed yet.
 
-## Running it
+## Connecting the phone
 
-Connect the iPhone with a USB data cable and unlock it. It should appear in Finder. Then run this in Terminal without sudo:
+Connect the iPhone with a USB data cable, unlock it and make sure it appears in Finder. Run commands from Terminal without sudo, and accept **Trust This Computer** on the phone if asked.
 
 ```bash
 .venv/bin/python iphone/discover.py
 ```
 
-Choose a device number and accept **Trust This Computer** on the phone if asked. Press Enter to cancel.
+Choose a device number, or press Enter to cancel. Add `--list` to list devices without connecting. Only USB connections are listed; other Apple USB devices are rejected after selection if they aren't iPhones.
 
-To just list connected devices:
-
-```bash
-.venv/bin/python iphone/discover.py --list
-```
-
-Example output:
-
-```text
-Connected USB devices:
-  1. UDID: ********1234
-Choose a device (Enter to cancel): 1
-Connecting... Unlock the iPhone and tap Trust if asked.
-[OK] USB connection
-[OK] Paired with this Mac
-[OK] iPhone detected
-Name: My iPhone
-Model: iPhone13,2
-iOS: 27.0.1
-UDID: ********1234
-[OK] Developer Mode: on
-```
-
-The list can include other Apple devices, so the script checks that the selected device is an iPhone after connecting. Wi-Fi connections are ignored. `Model` is Apple's product identifier.
-
-## Notes from getting it working
-
-USB discovery and pairing have worked on my iPhone, and Developer Mode is now enabled. Setting and clearing a simulated location still need to be implemented and tried on the phone.
-
-Developer Mode is under **Settings > Privacy & Security > Developer Mode**. The toggle was initially missing. This command made it appear:
+Location commands also need Developer Mode under **Settings > Privacy & Security > Developer Mode**. If the switch is missing, this command reveals it:
 
 ```bash
 .venv/bin/python -m pymobiledevice3 amfi reveal-developer-mode --usbmux /var/run/usbmuxd
 ```
 
-That only reveals the switch. Turning it on still happens on the phone, including the restart and confirmation.
+Then enable it on the phone and follow the restart and confirmation prompts.
 
-If discovery fails, I'll check the cable, unlock the phone and make sure Finder can see it. A trust prompt can take longer than the script's timeout; accepting it and running the script again should handle that.
+## Location commands
 
-## Keeping device details private
+Check the connection and developer services without changing location:
 
-Only the last four characters of the UDID are printed. Library output is hidden because it can contain device identifiers or pairing details. I also remove personal device names before sharing output.
+```bash
+.venv/bin/python iphone/location_cli.py doctor
+```
 
-Pairing files are kept in `.local/pairing/`, which is ignored by Git. The folder uses `0700` permissions and new files use `0600`. Apple's USB service can also store pairing records. These files and any private keys should stay local.
+Doctor shows each connection step. Set and Clear keep the output shorter. If the connection fails, check the cable, unlock the phone and check Finder first.
 
-## How it connects
+Set a location, for example central Melbourne:
 
-The script uses pymobiledevice3's async `list_devices` and `create_using_usbmux` calls. It connects to the selected USB device, checks the paired session and verifies that the device ID matches. Developer Mode is read from the lockdown AMFI domain; a missing value stays unknown instead of being treated as off.
+```bash
+.venv/bin/python iphone/location_cli.py set -37.8136 144.9631
+```
 
-I'm keeping the iPhone connection code in Python. The Electron app will call it later.
+Choose the phone, then open Apple Maps and tap the current-location arrow to check the blue dot. Keep the terminal open while using the simulated location. **Ctrl+C** attempts to clear it before closing the connection.
+
+To clear and confirm the real location:
+
+```bash
+.venv/bin/python iphone/location_cli.py clear
+```
+
+Check the blue dot in Maps and type `yes` only when it's back at the real location. Enter leaves it unconfirmed. Clear doesn't receive a device acknowledgement, so a successful send alone isn't proof that location reporting has returned to normal.
+
+## Interrupted sessions
+
+The scripts keep a private recovery record in `.local/location.json`. It contains a device fingerprint and session state, without coordinates or a full UDID. An unresolved session blocks another Set, and recovery stays tied to the original phone. Nothing automatically reapplies a location.
+
+If the cable disconnects, the phone restarts or a command fails, reconnect the same phone, run Clear and check Maps. Unplugging the cable isn't treated as restoration. A forced kill or crash may prevent the normal Clear attempt from running.
+
+Only one location command runs at a time. Stop Set before running Clear in another terminal. The recovery record is removed after the Maps confirmation, not just when Clear is sent.
+
+Exit code `0` means the command finished or selection was cancelled. Code `3` means the location still needs confirmation, including after Set exits and sends Clear. Errors return `1`, missing dependencies or invalid arguments return `2`, and interruptions can return `130`.
+
+## Code layout
+
+- `iphone/discover.py` — list devices and show phone details.
+- `iphone/connection.py` — shared USB, pairing and output helpers.
+- `iphone/location_cli.py` — Doctor, Set, Clear and connection cleanup.
+- `iphone/session.py` — recovery file and lock for concurrent commands.
+- `iphone/requirements.txt` — the Python dependency version.
+
+The location connection goes through USB lockdown → CoreDeviceProxy → a userspace RSD tunnel → DVT → LocationSimulation. It reuses the selected USB connection and doesn't fall back to Wi-Fi. This DVT path doesn't need a developer image mount.
+
+Pairing records live in `.local/pairing/` and may also be stored by Apple's USB service. The local folder uses `0700` permissions and new credential and recovery files use `0600`. `.local/`, private keys and logs are excluded from Git. Full device IDs and library output are hidden; personal device names should still be removed before sharing discovery output.
 
 ## References and licensing
 
-- [pymobiledevice3 docs](https://doronz88.github.io/pymobiledevice3/latest/api/connection/)
-- [pymobiledevice3 source](https://github.com/doronz88/pymobiledevice3)
-- [Ghost Location](https://github.com/Blueturboguy07/ghost-location), a reference for the later location work. No source has been copied from it.
+- [pymobiledevice3](https://github.com/doronz88/pymobiledevice3) and its [connection docs](https://doronz88.github.io/pymobiledevice3/latest/api/connection/).
+- [DVT documentation](https://doronz88.github.io/pymobiledevice3/latest/api/dvt/).
+- [Ghost Location](https://github.com/Blueturboguy07/ghost-location), an architectural reference. No source has been copied from it.
 
-pymobiledevice3 and Ghost use GPL licensing. Private use is allowed, but distributing a combined app can require GPL-compatible licensing, corresponding source and license notices. I'll need to review those requirements before sharing a packaged app. See the [pymobiledevice3 license](https://github.com/doronz88/pymobiledevice3/blob/master/LICENSE).
+pymobiledevice3 and Ghost use GPL licensing. Private use is allowed, but distributing a combined app can require compatible licensing, corresponding source and license notices. I'll review those requirements before distributing a packaged app. See the [pymobiledevice3 license](https://github.com/doronz88/pymobiledevice3/blob/master/LICENSE).
