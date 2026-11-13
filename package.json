@@ -1,0 +1,21 @@
+{
+  "name": "spoofme",
+  "version": "0.1.0",
+  "private": true,
+  "productName": "SpoofMe",
+  "main": "electron/main.mjs",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "doctor": ".venv/bin/python iphone/discover.py --doctor"
+  },
+  "devDependencies": {
+    "electron": "45.3.1"
+  },
+  "dependencies": {
+    "leaflet": "1.9.4"
+  }
+}

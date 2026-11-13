@@ -1,4 +1,8 @@
-"""Find an iPhone over USB and show its connection details."""
+"""Standalone USB discovery and Doctor checks without opening Electron.
+
+Basic discovery reads the model, iOS version and Developer Mode status. Doctor
+also opens the same developer connection used by the app, without sending a
+location command. Neither check needs a map API key."""
 
 import argparse
 import asyncio
@@ -8,32 +12,59 @@ import logging
 import sys
 
 
-# Allow running this file directly or importing it as a module.
+# Allow the same diagnostics to run directly or through package imports.
 if __package__:
     from .connection import (DiscoveryError, connect_phone, error_message,
                              redacted, safe_text, usb_devices)
+    from .location import LocationSession, round_trip, run_step
+    from .session import session_lock
 else:
     from connection import (DiscoveryError, connect_phone, error_message,
                             redacted, safe_text, usb_devices)
+    from location import LocationSession, round_trip, run_step
+    from session import session_lock
+
+
+async def doctor(device):
+    """Check the app's complete connection path without changing location."""
+    # Share the app's lock so a diagnostic cannot compete with an active simulation.
+    with session_lock():
+        session = LocationSession()
+        try:
+            # Preparing opens USB, pairing, the RSD tunnel, DVT and its location channel.
+            # Reusing this path keeps Doctor aligned with what the app actually needs.
+            await session.prepare(device)
+            await run_step(round_trip(session.dvt), 'Developer connection check failed', 10)
+            await session._require_ready()
+            return ['[OK] USB connection', '[OK] Paired with this Mac',
+                    '[OK] Developer Mode', '[OK] Developer tunnel (RSD)',
+                    '[OK] Developer service (DVT)', '[OK] Location channel',
+                    '[OK] Reply received from the selected iPhone',
+                    '[INFO] No location command was sent. This checks the connection, not GPS.']
+        finally:
+            # A fresh diagnostic session never sets dirty, so close only releases resources.
+            # Any existing recovery record stays untouched, even when a check fails.
+            await session.close()
 
 
 async def inspect_phone(device):
-    # Use the same pairing and identity checks as the location commands.
+    # Reuse the app's trust and identity checks for this standalone USB check.
     async with asyncio.timeout(45):
         async with await connect_phone(device.serial) as phone:
             values = phone.all_values
             product = values.get('ProductType', '')
-            # Only show the basic device details.
+            # Print the basic phone details and keep the full identifier hidden.
             lines = ['[OK] USB connection', '[OK] Paired with this Mac', '[OK] iPhone detected',
                      'Name: ' + safe_text(values.get('DeviceName'), device.serial),
                      'Model: ' + safe_text(product, device.serial),
                      'iOS: ' + safe_text(values.get('ProductVersion'), device.serial),
                      'UDID: ' + redacted(device.serial)]
-            # Older iOS versions don't have a Developer Mode setting.
+            # Skip the Developer Mode query on older versions that do not have the setting.
             if not phone.has_developer_mode:
                 lines.append('[INFO] This iOS version does not have Developer Mode.')
             else:
-                # The bool helper treats a missing value as false. Keep it unknown here.
+                # Keep a missing value unknown, rather than treating it as Developer Mode being
+                # off.
                 try:
                     status = await phone.get_value(domain='com.apple.security.mac.amfi',
                                                    key='DeveloperModeStatus')
@@ -49,29 +80,30 @@ async def inspect_phone(device):
 
 
 def main(argv=None):
-    # --list stops before selection or pairing.
+    # Use --list for a quick USB check without pairing or selecting anything.
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--list', action='store_true', help='List USB devices without connecting')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--list', action='store_true', help='List USB devices without connecting')
+    mode.add_argument('--doctor', action='store_true', help='Check the full developer connection without changing location')
     args = parser.parse_args(argv)
-    # Keep library output private; print only the fields collected below.
+    # Hide library output and print only the explicitly selected fields below.
     logging.disable(logging.CRITICAL)
     try:
         with open(os.devnull, 'w') as quiet, redirect_stdout(quiet), redirect_stderr(quiet):
-            from pymobiledevice3.usbmux import list_devices
-            devices = asyncio.run(usb_devices(list_devices))
+            devices = asyncio.run(usb_devices())
         if not devices:
             print('[WAIT] No USB device found. Connect the iPhone, unlock it and check Finder.')
             return 1
-        # The list can include other Apple devices; connection checks verify iPhones.
+        # The USB list can include other Apple devices; the trust helper verifies an iPhone after selection.
         print('Connected USB devices:')
         for number, device in enumerate(devices, 1):
             print(f'  {number}. UDID: {redacted(device.serial)}')
         if args.list:
             return 0
-        # Require a person to choose instead of silently using the first device.
+        # Require a selection even with one phone, rather than silently choosing a target.
         if not sys.stdin.isatty():
             raise DiscoveryError('Run in Terminal to choose an iPhone.')
-        # Choose a listed device or leave the phone untouched by cancelling.
+        # An empty response cancels. Otherwise accept only a number from the displayed list.
         choice = input('Choose a device (Enter to cancel): ').strip()
         if not choice:
             print('Cancelled.')
@@ -80,18 +112,15 @@ def main(argv=None):
             raise DiscoveryError('Invalid selection. Run again and choose a number from the list.')
         device = devices[int(choice) - 1]
         print('Connecting... Unlock the iPhone and tap Trust if asked.')
-        # Hide library output while connecting, then print the device details.
+        # Keep connection diagnostics private and print the cleaned device details afterward.
         with open(os.devnull, 'w') as quiet, redirect_stdout(quiet), redirect_stderr(quiet):
-            lines = asyncio.run(inspect_phone(device))
+            lines = asyncio.run(doctor(device) if args.doctor else inspect_phone(device))
         print('\n'.join(lines))
         return 0
-    # Turn failures into short messages and exit codes for the terminal.
+    # Show a short error and exit code instead of a raw device traceback.
     except ModuleNotFoundError:
         print('[ERROR] Install dependencies first: .venv/bin/python -m pip install -r iphone/requirements.txt')
         return 2
-    except DiscoveryError as exc:
-        print('[ERROR] ' + str(exc))
-        return 1
     except (KeyboardInterrupt, EOFError):
         print('\nCancelled.')
         return 130

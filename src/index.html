@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <!-- Load the page scripts and Leaflet locally; the map key never enters this HTML. -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SpoofMe</title>
+  <link rel="stylesheet" href="/vendor/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/vendor/leaflet.js" defer></script>
+  <script src="/main.js" defer></script>
+</head>
+<body>
+  <!-- Keep connection status in the header so it stays visible while the sidebar scrolls. -->
+  <header class="app-header">
+    <div class="brand"><span class="brand-icon" aria-hidden="true">⌖</span><span>SpoofMe</span><span class="tag">USB location</span></div>
+    <div id="connection-badge" class="badge"><span class="status-dot"></span><span id="connection-label">Starting…</span></div>
+  </header>
+
+  <main>
+    <aside class="sidebar">
+      <!-- Require an explicit USB selection and connection before enabling phone actions. -->
+      <section aria-labelledby="device-heading">
+        <div class="section-heading"><h1 id="device-heading">Your iPhone</h1><button id="refresh" class="text-button" type="button">Refresh</button></div>
+        <p class="muted">Unlock your iPhone and connect over USB.</p>
+        <label for="devices">USB device</label>
+        <select id="devices"><option value="">Choose a device</option></select>
+        <button id="connect" class="secondary full-width" type="button" disabled>Connect iPhone</button>
+        <div id="device-details" class="device-details" hidden>
+          <strong id="device-name"></strong>
+          <span id="device-version"></span>
+        </div>
+      </section>
+
+      <!-- These fields and the map pin are a preview until Set is pressed. -->
+      <section aria-labelledby="point-heading">
+        <div class="section-heading"><h2 id="point-heading">Preview location</h2><span class="small-label">DECIMAL DEGREES</span></div>
+        <p class="muted">Click or drag the pin. Press Set to change the phone.</p>
+        <div class="coordinates">
+          <div><label for="latitude">Latitude</label><input id="latitude" inputmode="decimal" type="text" value="-37.813600" autocomplete="off" spellcheck="false"></div>
+          <div><label for="longitude">Longitude</label><input id="longitude" inputmode="decimal" type="text" value="144.963100" autocomplete="off" spellcheck="false"></div>
+        </div>
+        <p id="coordinate-hint" class="field-hint">The pin is a preview, not a reading from your phone.</p>
+        <button id="set" class="primary full-width" type="button" disabled>Set Location</button>
+        <button id="restore" class="secondary full-width" type="button" disabled>Restore Real Location</button>
+      </section>
+
+      <!-- Show the phone's session separately and ask for a real Maps check after Clear. -->
+      <section class="session-section" aria-labelledby="session-heading">
+        <h2 id="session-heading">Phone session</h2>
+        <p id="location-state" class="session-state">No location sent</p>
+        <p id="last-sent" class="muted">Your selected point stays on this Mac until you press Set.</p>
+        <div id="recovery" class="callout" hidden></div>
+        <button id="confirm" class="secondary full-width" type="button" hidden>I checked Maps — real location is back</button>
+      </section>
+
+      <p class="privacy-note">Voyager tiles come from CARTO using OpenStreetMap data. CARTO can see the area you view. Device identifiers stay local.</p>
+    </aside>
+
+    <!-- Leaflet owns this pane; attribution and tile notices stay visible above the map. -->
+    <div class="map-panel">
+      <div class="map-caption"><span class="pin-key"></span><strong>Preview pin</strong><span>Move freely. Set when ready.</span></div>
+      <div id="map" aria-label="Map for selecting a location"></div>
+      <div id="map-notice" class="map-notice" role="status" hidden></div>
+    </div>
+  </main>
+
+  <!-- Use a live region so status and error messages are announced accessibly. -->
+  <footer id="message" role="status" aria-live="polite">Starting the phone connection…</footer>
+</body>
+</html>
